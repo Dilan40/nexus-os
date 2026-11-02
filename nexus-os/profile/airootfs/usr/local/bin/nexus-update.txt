@@ -1,0 +1,53 @@
+#!/bin/bash
+set -euo pipefail
+MANIFEST_URL="${NEXUS_MANIFEST:-https://updates.nexus.local/manifest.json}"
+CURRENT=$(cat /etc/nexus-version 2>/dev/null || echo "3.0.0")
+STATE=/var/lib/nexus/bridge/state.json
+progress(){ echo "{\"step\":\"$2\",\"progress\":$1}" > "$STATE"; }
+
+case "${1:-check}" in
+  check)
+    manifest=$(curl -sf --max-time 10 "$MANIFEST_URL") || {
+      echo "{\"available\": false, \"current\": \"$CURRENT\", \"error\": \"no network\"}"
+      exit 0
+    }
+    latest=$(echo "$manifest" | jq -r .version)
+    notes=$(echo "$manifest" | jq -r '.notes // ""')
+    if [ "$latest" != "$CURRENT" ]; then
+      echo "{\"available\": true, \"current\": \"$CURRENT\", \"latest\": \"$latest\", \"notes\": \"$notes\"}"
+    else
+      echo "{\"available\": false, \"current\": \"$CURRENT\"}"
+    fi
+    ;;
+
+  apply)
+    progress 10 "Загрузка манифеста"
+    manifest=$(curl -sf --max-time 15 "$MANIFEST_URL")
+    latest=$(echo "$manifest" | jq -r .version)
+
+    progress 25 "Обновление пакетов"
+    pacman -Sy --noconfirm --needed archlinux-keyring >/dev/null
+    pacman -Su --noconfirm --noprogressbar >/dev/null
+
+    progress 60 "Обновление компонентов NEXUS"
+    echo "$manifest" | jq -c '.components | to_entries[]' | while read -r entry; do
+      name=$(echo "$entry" | jq -r .key)
+      url=$(echo  "$entry" | jq -r .value.url)
+      path=$(echo "$entry" | jq -r .value.path)
+      sha=$(echo  "$entry" | jq -r .value.sha256)
+      tmp=$(mktemp)
+      curl -sfL "$url" -o "$tmp"
+      actual=$(sha256sum "$tmp" | cut -d' ' -f1)
+      if [ "$actual" != "$sha" ]; then
+        echo "! checksum mismatch: $name" >&2
+        rm -f "$tmp"; continue
+      fi
+      install -m 644 "$tmp" "$path"
+      rm -f "$tmp"
+      echo "✓ $name"
+    done
+
+    echo "$latest" > /etc/nexus-version
+    progress 100 "Готово. Перезагрузка..."
+    ;;
+esac

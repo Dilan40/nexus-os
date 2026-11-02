@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"><title>NEXUS OS — Первая настройка</title>
+<link rel="stylesheet" href="base.css">
+</head>
+<body>
+<div class="win">
+  <div class="win-body">
+    <div class="card" id="card"></div>
+  </div>
+  <div class="progress">
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="progress-text" id="progressText">Шаг 1 из 7</div>
+  </div>
+</div>
+<script>
+const bridge = {
+  async send(action, data={}){
+    const id = Math.random().toString(36).slice(2);
+    await fetch('http://127.0.0.1:9377/cmd', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({id, action, ...data})
+    });
+    for (let i=0; i<600; i++){
+      await new Promise(r => setTimeout(r, 200));
+      const r = await fetch(`http://127.0.0.1:9377/resp/${id}`);
+      if (r.ok) return await r.json();
+    }
+    throw new Error('timeout');
+  }
+};
+
+const answers = {};
+let current = 0;
+
+const steps = [
+  {
+    title: 'Добро пожаловать в NEXUS OS',
+    sub: 'Давайте настроим вашу систему. Это займёт несколько минут.',
+    render: () => `
+      <div class="options">
+        <div class="option sel" onclick="selectOption(this,'lang','ru')">
+          <div><div class="option-name">Русский</div><div class="option-sub">Russian (Россия)</div></div>
+        </div>
+        <div class="option" onclick="selectOption(this,'lang','en')">
+          <div><div class="option-name">English</div><div class="option-sub">English (United States)</div></div>
+        </div>
+      </div>`,
+    valid: () => true,
+    apply: () => answers.lang = answers.lang || 'ru'
+  },
+  {
+    title: 'Часовой пояс',
+    sub: 'Укажите ваш регион для правильного времени и даты.',
+    render: () => `
+      <input class="field" id="fTz" value="${answers.tz || 'Europe/Moscow'}" placeholder="Europe/Moscow">
+      <div class="small">Примеры: Europe/Moscow, Europe/Berlin, Asia/Tokyo, America/New_York</div>`,
+    valid: () => document.getElementById('fTz').value.includes('/'),
+    apply: async () => {
+      answers.tz = document.getElementById('fTz').value.trim();
+      await bridge.send('oobe.setTimezone', {tz: answers.tz});
+    }
+  },
+  {
+    title: 'Раскладка клавиатуры',
+    sub: 'Выберите основную раскладку.',
+    render: () => `
+      <div class="options">
+        <div class="option sel" onclick="selectOption(this,'kb','us,ru')">
+          <div><div class="option-name">Русская + английская</div><div class="option-sub">Переключение по Alt+Shift</div></div>
+        </div>
+        <div class="option" onclick="selectOption(this,'kb','us')">
+          <div><div class="option-name">Только английская</div><div class="option-sub">US</div></div>
+        </div>
+      </div>`,
+    valid: () => true,
+    apply: async () => {
+      answers.kb = answers.kb || 'us,ru';
+      await bridge.send('oobe.setKeyboard', {layout: answers.kb});
+    }
+  },
+  {
+    title: 'Подключение к сети',
+    sub: 'Выберите Wi-Fi сеть (можно пропустить и настроить позже).',
+    render: async () => {
+      try {
+        const res = await bridge.send('oobe.scanWifi');
+        const nets = res.networks || [];
+        if (!nets.length) return '<div class="small" style="text-align:center;padding:20px">Сети не найдены. Нажмите «Далее» чтобы пропустить.</div>';
+        return '<div class="options">' + nets.map(n => `
+          <div class="option" onclick="selectOption(this,'wifi','${n.ssid}')">
+            <div><div class="option-name">📶 ${n.ssid}</div><div class="option-sub">${n.signal} dBm</div></div>
+          </div>`).join('') + '</div>';
+      } catch(e){ return '<div class="small">Ошибка сканирования</div>'; }
+    },
+    valid: () => true,
+    apply: async () => {
+      if (answers.wifi){
+        const pass = prompt('Пароль от ' + answers.wifi);
+        if (pass) await bridge.send('oobe.connectWifi', {ssid: answers.wifi, password: pass});
+      }
+    }
+  },
+  {
+    title: 'Создание учётной записи',
+    sub: 'Это будет ваш основной аккаунт администратора.',
+    render: () => `
+      <input class="field" id="fUser" placeholder="Имя пользователя" value="player1">
+      <input class="field" id="fPass" type="password" placeholder="Пароль (мин. 8 символов)">
+      <input class="field" id="fPass2" type="password" placeholder="Подтвердите пароль">
+      <div class="small" id="passErr" style="color:#f87171"></div>`,
+    valid: () => {
+      const u = document.getElementById('fUser')?.value.trim();
+      const p1 = document.getElementById('fPass')?.value;
+      const p2 = document.getElementById('fPass2')?.value;
+      const err = document.getElementById('passErr');
+      if (err){
+        if (p1 && p2 && p1 !== p2) err.textContent = 'Пароли не совпадают';
+        else if (p1 && p1.length < 8) err.textContent = 'Пароль слишком короткий';
+        else err.textContent = '';
+      }
+      return u && u.length >= 2 && p1 && p1.length >= 8 && p1 === p2;
+    },
+    apply: async () => {
+      answers.username = document.getElementById('fUser').value.trim();
+      answers.password = document.getElementById('fPass').value;
+      await bridge.send('oobe.createUser', {
+        username: answers.username, password: answers.password
+      });
+    }
+  },
+  {
+    title: 'Конфиденциальность',
+    sub: 'Выберите, что вы хотите разрешить.',
+    render: () => `
+      <div class="checkbox-row" onclick="toggleChk(this)">
+        <input type="checkbox" checked onclick="event.stopPropagation()" data-k="telemetry">
+        <div><div class="option-name">Отправлять диагностику</div>
+        <div class="option-sub">Анонимная статистика помогает улучшать систему</div></div>
+      </div>
+      <div class="checkbox-row" onclick="toggleChk(this)">
+        <input type="checkbox" checked onclick="event.stopPropagation()" data-k="autoupdate">
+        <div><div class="option-name">Автоматические обновления</div>
+        <div class="option-sub">Устанавливать обновления безопасности автоматически</div></div>
+      </div>
+      <div class="checkbox-row" onclick="toggleChk(this)">
+        <input type="checkbox" onclick="event.stopPropagation()" data-k="location">
+        <div><div class="option-name">Делиться расположением</div>
+        <div class="option-sub">Для часового пояса и погоды</div></div>
+      </div>`,
+    valid: () => true,
+    apply: () => {
+      answers.privacy = {
+        telemetry: document.querySelector('[data-k="telemetry"]').checked,
+        autoupdate: document.querySelector('[data-k="autoupdate"]').checked,
+        location: document.querySelector('[data-k="location"]').checked
+      };
+    }
+  },
+  {
+    title: 'Всё готово!',
+    sub: 'NEXUS OS настроена. Система перезагрузится через несколько секунд.',
+    render: () => `<div class="icon-big">✓</div><div class="small" style="text-align:center">Не выключайте компьютер.</div>`,
+    valid: () => true,
+    apply: async () => {
+      await bridge.send('oobe.finish');
+      setTimeout(() => bridge.send('system.reboot'), 2500);
+    }
+  }
+];
+
+function selectOption(el, key, val){
+  document.querySelectorAll('.option').forEach(o => o.classList.remove('sel'));
+  el.classList.add('sel');
+  answers[key] = val;
+}
+function toggleChk(row){
+  const cb = row.querySelector('input');
+  cb.checked = !cb.checked;
+}
+
+async function renderStep(){
+  const s = steps[current];
+  let body = typeof s.render === 'function' ? s.render() : s.render;
+  if (body instanceof Promise) body = await body;
+  
+  document.getElementById('card').innerHTML = `
+    <div class="logo">NX</div>
+    <h1>${s.title}</h1>
+    <p class="sub">${s.sub}</p>
+    <div id="stepBody">${body}</div>
+    <div class="actions">
+      ${current > 0 ? '<button class="btn secondary" onclick="prevStep()">Назад</button>' : ''}
+      <button class="btn primary" id="nextBtn" onclick="nextStep()">
+        ${current === steps.length-1 ? 'Завершить' : 'Далее'}
+      </button>
+    </div>`;
+  
+  document.getElementById('progressFill').style.width = ((current+1)/steps.length*100) + '%';
+  document.getElementById('progressText').textContent = `Шаг ${current+1} из ${steps.length}`;
+  
+  const check = () => {
+    const btn = document.getElementById('nextBtn');
+    if (btn) btn.disabled = !s.valid();
+  };
+  check();
+  setInterval(check, 250);
+}
+
+async function nextStep(){
+  if (!steps[current].valid()) return;
+  const btn = document.getElementById('nextBtn');
+  btn.disabled = true; btn.textContent = '...';
+  try { await steps[current].apply(); } catch(e){ console.error(e); }
+  if (current < steps.length - 1){ current++; renderStep(); }
+}
+function prevStep(){ if (current > 0){ current--; renderStep(); } }
+
+renderStep();
+</script>
+</body>
+</html>

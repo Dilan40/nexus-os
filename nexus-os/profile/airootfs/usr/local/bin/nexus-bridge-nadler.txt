@@ -1,0 +1,93 @@
+#!/bin/bash
+set -u
+CMD_DIR=/var/lib/nexus/bridge/cmd
+RESP_DIR=/var/lib/nexus/bridge/resp
+STATE=/var/lib/nexus/bridge/state.json
+
+respond(){ echo "$2" > "$RESP_DIR/$1.json"; }
+set_state(){ echo "{\"step\":\"$2\",\"progress\":$1}" > "$STATE"; }
+
+while true; do
+  for f in "$CMD_DIR"/*.json; do
+    [ -f "$f" ] || continue
+    cid=$(basename "$f" .json)
+    cmd=$(cat "$f"); rm -f "$f"
+    action=$(echo "$cmd" | jq -r .action)
+
+    case "$action" in
+      install.disks)
+        disks=$(lsblk -J -d -o NAME,SIZE,MODEL,TYPE | jq -c '[.blockdevices[] | select(.type=="disk")]')
+        respond "$cid" "{\"disks\": $disks}"
+        ;;
+      install.start)
+        dev=$(echo "$cmd" | jq -r .device)
+        nohup /usr/local/bin/nexus-installer-run "$dev" >/var/log/nexus-install.log 2>&1 &
+        respond "$cid" '{"ok": true}'
+        ;;
+      session.startDesktop)
+        systemctl stop nexus-oobe 2>/dev/null
+        pkill -f chromium 2>/dev/null
+        sleep 1
+        nohup /usr/local/bin/nexus-session-live >/dev/null 2>&1 &
+        respond "$cid" '{"ok": true}'
+        ;;
+      session.startRecovery)
+        pkill -f chromium 2>/dev/null
+        nohup xterm -maximized -e bash >/dev/null 2>&1 &
+        respond "$cid" '{"ok": true}'
+        ;;
+      oobe.setTimezone)
+        tz=$(echo "$cmd" | jq -r .tz)
+        ln -sf "/usr/share/zoneinfo/$tz" /etc/localtime && echo "$tz" > /etc/timezone
+        respond "$cid" '{"ok": true}'
+        ;;
+      oobe.setKeyboard)
+        kb=$(echo "$cmd" | jq -r .layout)
+        echo "KEYMAP=$kb" > /etc/vconsole.conf
+        respond "$cid" '{"ok": true}'
+        ;;
+      oobe.scanWifi)
+        nets=$(nmcli -t -f SSID,SIGNAL dev wifi list 2>/dev/null | \
+               awk -F: 'NF && $1!="" {print "{\"ssid\":\"" $1 "\",\"signal\":" $2 "}"}' | \
+               jq -s -c '.')
+        respond "$cid" "{\"networks\": $nets}"
+        ;;
+      oobe.connectWifi)
+        ssid=$(echo "$cmd" | jq -r .ssid)
+        pass=$(echo "$cmd" | jq -r .password)
+        nmcli dev wifi connect "$ssid" password "$pass" >/dev/null 2>&1
+        respond "$cid" '{"ok": true}'
+        ;;
+      oobe.createUser)
+        u=$(echo "$cmd" | jq -r .username)
+        p=$(echo "$cmd" | jq -r .password)
+        id "$u" >/dev/null 2>&1 || useradd -m -G wheel,audio,video -s /bin/bash "$u"
+        echo "$u:$p" | chpasswd
+        echo "$u ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/90-nexus
+        respond "$cid" '{"ok": true}'
+        ;;
+      oobe.finish)
+        touch /var/lib/nexus/oobe-done
+        systemctl enable kiosk.service
+        respond "$cid" '{"ok": true}'
+        ;;
+      update.check)
+        result=$(/usr/local/bin/nexus-update check 2>&1)
+        respond "$cid" "$result"
+        ;;
+      update.apply)
+        nohup /usr/local/bin/nexus-update apply >/var/log/nexus-update.log 2>&1 &
+        respond "$cid" '{"ok": true}'
+        ;;
+      system.reboot)
+        respond "$cid" '{"ok": true}'
+        sleep 1
+        systemctl reboot
+        ;;
+      *)
+        respond "$cid" '{"err":"unknown action"}'
+        ;;
+    esac
+  done
+  sleep 0.2
+done

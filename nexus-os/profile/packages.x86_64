@@ -1,0 +1,10 @@
+jq
+python
+rsync
+parted
+dosfstools
+e2fsprogs
+nmcli
+xterm
+cage
+chromium

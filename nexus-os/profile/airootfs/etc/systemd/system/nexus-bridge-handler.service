@@ -1,0 +1,12 @@
+[Unit]
+Description=NEXUS Bridge Handler
+After=nexus-bridge.service
+Requires=nexus-bridge.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/nexus-bridge-handler
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

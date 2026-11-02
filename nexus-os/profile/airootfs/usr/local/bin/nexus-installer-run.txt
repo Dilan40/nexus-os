@@ -1,0 +1,71 @@
+#!/bin/bash
+set -euo pipefail
+DEVICE="${1:?device required}"
+STATE=/var/lib/nexus/bridge/state.json
+
+progress(){ echo "{\"step\":\"$2\",\"progress\":$1}" > "$STATE"; }
+
+progress 3 "Разметка диска"
+umount -R /mnt/nexus 2>/dev/null || true
+parted -s "$DEVICE" mklabel gpt
+parted -s "$DEVICE" mkpart ESP fat32 1MiB 512MiB
+parted -s "$DEVICE" set 1 esp on
+parted -s "$DEVICE" mkpart primary ext4 512MiB 100%
+
+if [[ "$DEVICE" == *nvme* || "$DEVICE" == *mmcblk* ]]; then
+  PART_EFI="${DEVICE}p1"; PART_ROOT="${DEVICE}p2"
+else
+  PART_EFI="${DEVICE}1"; PART_ROOT="${DEVICE}2"
+fi
+
+progress 12 "Форматирование"
+mkfs.fat -F32 -n NEXUS_EFI "$PART_EFI" >/dev/null
+mkfs.ext4 -F -L NEXUS_ROOT "$PART_ROOT" >/dev/null
+
+progress 20 "Монтирование"
+mkdir -p /mnt/nexus
+mount "$PART_ROOT" /mnt/nexus
+mkdir -p /mnt/nexus/boot/efi
+mount "$PART_EFI" /mnt/nexus/boot/efi
+
+progress 30 "Копирование системы (не выключайте)"
+rsync -aAX --info=progress2 \
+  --exclude=/proc --exclude=/sys --exclude=/dev --exclude=/run \
+  --exclude=/tmp --exclude=/mnt --exclude=/media \
+  --exclude=/var/lib/nexus/bridge \
+  / /mnt/nexus/ >/dev/null
+
+progress 70 "Настройка fstab"
+genfstab -U /mnt/nexus >> /mnt/nexus/etc/fstab
+
+progress 78 "Установка загрузчика"
+arch-chroot /mnt/nexus /bin/bash -c '
+  bootctl --path=/boot/efi install
+  cat > /boot/efi/loader/entries/nexus.conf <<CONF
+title   NEXUS OS
+linux   /vmlinuz-linux
+initrd  /initramfs-linux.img
+options root=LABEL=NEXUS_ROOT rw quiet loglevel=3
+CONF
+  cat > /boot/efi/loader/loader.conf <<CONF
+default nexus.conf
+timeout 3
+console-mode max
+CONF
+  systemctl enable NetworkManager
+  systemctl enable seatd
+  systemctl enable nexus-bridge
+  systemctl enable nexus-bridge-handler
+  systemctl enable nexus-update-check.timer
+  systemctl enable kiosk.service
+  systemctl set-default graphical.target
+'
+
+progress 92 "Подготовка первого запуска"
+mkdir -p /mnt/nexus/var/lib/nexus
+touch /mnt/nexus/var/lib/nexus/installed
+mkdir -p /mnt/nexus/var/lib/nexus/bridge/{cmd,resp}
+chmod 777 /mnt/nexus/var/lib/nexus/bridge/{cmd,resp}
+echo "3.0.0" > /mnt/nexus/etc/nexus-version
+
+progress 100 "Готово. Перезагрузите и извлеките носитель."

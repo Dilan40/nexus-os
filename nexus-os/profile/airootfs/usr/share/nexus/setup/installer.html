@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"><title>NEXUS OS — Установка</title>
+<link rel="stylesheet" href="base.css">
+</head>
+<body>
+<div class="win">
+  <div class="win-body">
+    <div class="card" id="card">
+      <div class="logo">💾</div>
+      <h1>Установка NEXUS OS</h1>
+      <p class="sub">Выберите диск, на который будет установлена система.</p>
+      <div class="options" id="diskList"><div class="spinner"></div></div>
+      <div id="warn" class="small hidden" style="color:#f87171;margin-top:16px;padding:12px;background:rgba(248,113,113,.1);border-radius:8px">
+        ⚠️ Внимание! Все данные на выбранном диске будут стёрты безвозвратно.
+      </div>
+      <div class="actions">
+        <button class="btn secondary" onclick="location.href='boot-selector.html'">Назад</button>
+        <button class="btn primary" id="installBtn" disabled>Установить</button>
+      </div>
+    </div>
+  </div>
+  <div class="progress">
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="progress-text" id="progressText">Ожидание</div>
+  </div>
+</div>
+<script>
+const bridge = {
+  async send(action, data={}){
+    const id = Math.random().toString(36).slice(2);
+    await fetch('http://127.0.0.1:9377/cmd', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({id, action, ...data})
+    });
+    for (let i=0; i<600; i++){
+      await new Promise(r => setTimeout(r, 200));
+      const r = await fetch(`http://127.0.0.1:9377/resp/${id}`);
+      if (r.ok) return await r.json();
+    }
+    throw new Error('timeout');
+  }
+};
+
+let selected = null;
+
+async function loadDisks(){
+  const res = await bridge.send('install.disks');
+  const list = document.getElementById('diskList');
+  list.innerHTML = '';
+  (res.disks || []).forEach(d => {
+    const el = document.createElement('div');
+    el.className = 'option';
+    el.innerHTML = `<div>
+      <div class="option-name">${d.model || d.name}</div>
+      <div class="option-sub">${d.name} · ${d.size} · ${d.type}</div>
+    </div>`;
+    el.onclick = () => {
+      document.querySelectorAll('.option').forEach(o => o.classList.remove('sel'));
+      el.classList.add('sel');
+      selected = d.name;
+      document.getElementById('installBtn').disabled = false;
+      document.getElementById('warn').classList.remove('hidden');
+    };
+    list.appendChild(el);
+  });
+  if (!res.disks || !res.disks.length){
+    list.innerHTML = '<div class="small" style="text-align:center;padding:20px">Диски не найдены</div>';
+  }
+}
+
+document.getElementById('installBtn').onclick = async () => {
+  if (!selected) return;
+  if (!confirm(`Установить NEXUS OS на ${selected}? Все данные будут стёрты.`)) return;
+  
+  document.getElementById('card').innerHTML = `
+    <div class="logo">⚙️</div>
+    <h1>Установка...</h1>
+    <p class="sub">Не выключайте компьютер. Это займёт 5–10 минут.</p>
+    <div class="spinner"></div>`;
+  
+  await bridge.send('install.start', {device: selected});
+  
+  // Poll progress
+  const poll = setInterval(async () => {
+    const state = await (await fetch('http://127.0.0.1:9377/state')).json();
+    if (state.progress !== undefined){
+      document.getElementById('progressFill').style.width = state.progress + '%';
+      document.getElementById('progressText').textContent = state.step || '';
+    }
+    if (state.progress >= 100){
+      clearInterval(poll);
+      document.getElementById('card').innerHTML = `
+        <div class="icon-big">✓</div>
+        <h1>Установка завершена</h1>
+        <p class="sub">Извлеките установочный носитель и нажмите «Перезагрузить».<br>
+        При следующем запуске система предложит настроить аккаунт.</p>
+        <div class="actions">
+          <button class="btn primary" onclick="bridge.send('system.reboot')">Перезагрузить</button>
+        </div>`;
+    }
+  }, 500);
+};
+
+loadDisks();
+</script>
+</body>
+</html>

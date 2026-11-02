@@ -1,0 +1,13 @@
+#!/bin/bash
+CHROMIUM="/usr/bin/chromium --kiosk --noerrdialogs --disable-infobars \
+  --disable-session-crashed-bubble --no-first-run --start-fullscreen \
+  --disable-features=TranslateUI"
+BASE="file:///usr/share/nexus"
+
+if [ -f /var/lib/nexus/oobe-done ]; then
+  exec $CHROMIUM --app=$BASE/index.html
+elif [ -f /var/lib/nexus/installed ]; then
+  exec $CHROMIUM --app=$BASE/setup/oobe.html
+else
+  exec $CHROMIUM --app=$BASE/setup/boot-selector.html
+fi

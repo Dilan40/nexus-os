@@ -1,0 +1,6 @@
+[Unit]
+Description=NEXUS update check
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c '/usr/local/bin/nexus-update check > /var/lib/nexus/last-update-check.json'

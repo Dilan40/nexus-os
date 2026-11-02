@@ -1,0 +1,18 @@
+[Unit]
+Description=NEXUS OS Session
+After=systemd-user-sessions.service nexus-bridge.service
+Wants=nexus-bridge.service
+Conflicts=getty@tty1.service
+
+[Service]
+Type=simple
+User=root
+Environment=XDG_RUNTIME_DIR=/run/user/0
+ExecStartPre=/bin/mkdir -p /run/user/0
+ExecStartPre=/bin/chmod 700 /run/user/0
+ExecStart=/usr/bin/cage -- /usr/local/bin/nexus-session
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=graphical.target

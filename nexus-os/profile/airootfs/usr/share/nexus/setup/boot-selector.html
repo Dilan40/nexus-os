@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"><title>NEXUS OS — Загрузка</title>
+<link rel="stylesheet" href="base.css">
+</head>
+<body>
+<div class="win">
+  <div class="win-body">
+    <div class="card">
+      <div class="logo">NX</div>
+      <h1>NEXUS OS</h1>
+      <p class="sub">Выберите режим запуска</p>
+      <div class="options">
+        <div class="option" onclick="pick('live')">
+          <div>
+            <div class="option-name">🖥 Попробовать NEXUS OS</div>
+            <div class="option-sub">Загрузиться без установки. Изменения не сохранятся.</div>
+          </div>
+        </div>
+        <div class="option" onclick="pick('install')">
+          <div>
+            <div class="option-name">💾 Установить NEXUS OS</div>
+            <div class="option-sub">Установить систему на диск. Займёт 5–10 минут.</div>
+          </div>
+        </div>
+        <div class="option" onclick="pick('recovery')">
+          <div>
+            <div class="option-name">🛠 Восстановление системы</div>
+            <div class="option-sub">Открыть консоль для восстановления загрузчика.</div>
+          </div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn primary" id="goBtn" disabled>Продолжить</button>
+      </div>
+    </div>
+  </div>
+  <div class="progress">
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="progress-text" id="progressText">Готов к запуску</div>
+  </div>
+</div>
+<script>
+const bridge = {
+  async send(action, data={}){
+    const id = Math.random().toString(36).slice(2);
+    await fetch('http://127.0.0.1:9377/cmd', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({id, action, ...data})
+    });
+    for (let i=0; i<300; i++){
+      await new Promise(r => setTimeout(r, 200));
+      const r = await fetch(`http://127.0.0.1:9377/resp/${id}`);
+      if (r.ok) return await r.json();
+    }
+    throw new Error('timeout');
+  }
+};
+
+let choice = null;
+function pick(c){
+  choice = c;
+  document.querySelectorAll('.option').forEach(o => o.classList.remove('sel'));
+  event.currentTarget.classList.add('sel');
+  document.getElementById('goBtn').disabled = false;
+}
+
+document.getElementById('goBtn').onclick = async () => {
+  if (choice === 'live'){
+    await bridge.send('session.startDesktop');
+  } else if (choice === 'recovery'){
+    await bridge.send('session.startRecovery');
+  } else if (choice === 'install'){
+    window.location.href = 'installer.html';
+  }
+};
+</script>
+</body>
+</html>

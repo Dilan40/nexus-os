@@ -1,0 +1,13 @@
+[Unit]
+Description=NEXUS Bridge HTTP
+After=network.target
+
+[Service]
+Type=simple
+ExecStartPre=/bin/mkdir -p /var/lib/nexus/bridge/cmd /var/lib/nexus/bridge/resp
+ExecStartPre=/bin/chmod 777 /var/lib/nexus/bridge /var/lib/nexus/bridge/cmd /var/lib/nexus/bridge/resp
+ExecStart=/usr/bin/python3 /usr/local/bin/nexus-bridge.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

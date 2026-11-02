@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"><title>NEXUS OS — Обновления</title>
+<link rel="stylesheet" href="base.css">
+</head>
+<body>
+<div class="win">
+  <div class="win-body">
+    <div class="card" id="card">
+      <div class="logo">🔄</div>
+      <h1>Центр обновлений</h1>
+      <p class="sub" id="status">Проверка обновлений...</p>
+      <div id="info" class="small"></div>
+      <div class="actions">
+        <button class="btn secondary" onclick="history.back()">Закрыть</button>
+        <button class="btn primary" id="updateBtn" disabled>Установить обновление</button>
+      </div>
+    </div>
+  </div>
+  <div class="progress">
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="progress-text" id="progressText">Проверка</div>
+  </div>
+</div>
+<script>
+const bridge = {
+  async send(action, data={}){
+    const id = Math.random().toString(36).slice(2);
+    await fetch('http://127.0.0.1:9377/cmd', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({id, action, ...data})
+    });
+    for (let i=0; i<600; i++){
+      await new Promise(r => setTimeout(r, 200));
+      const r = await fetch(`http://127.0.0.1:9377/resp/${id}`);
+      if (r.ok) return await r.json();
+    }
+    throw new Error('timeout');
+  }
+};
+
+async function check(){
+  try {
+    const res = await bridge.send('update.check');
+    if (res.available){
+      document.getElementById('status').textContent = 'Доступно обновление';
+      document.getElementById('info').innerHTML = `
+        <div style="background:rgba(56,189,248,.1);padding:16px;border-radius:8px;margin-top:16px">
+          <div><b>Текущая версия:</b> ${res.current}</div>
+          <div style="margin-top:6px"><b>Новая версия:</b> ${res.latest}</div>
+          ${res.notes ? `<div style="margin-top:12px;color:#9ba3b4">${res.notes}</div>` : ''}
+        </div>`;
+      document.getElementById('updateBtn').disabled = false;
+    } else {
+      document.getElementById('status').textContent = 'У вас последняя версия';
+      document.getElementById('info').innerHTML = `<div class="small" style="margin-top:16px">Версия: <b>${res.current}</b></div>`;
+    }
+  } catch(e){
+    document.getElementById('status').textContent = 'Не удалось проверить обновления';
+    document.getElementById('info').innerHTML = `<div class="small" style="color:#f87171">${e.message}</div>`;
+  }
+}
+
+document.getElementById('updateBtn').onclick = async () => {
+  if (!confirm('Установить обновление? Система перезагрузится.')) return;
+  document.getElementById('card').innerHTML = `
+    <div class="logo">⚙️</div>
+    <h1>Установка обновления</h1>
+    <p class="sub">Не выключайте компьютер.</p>
+    <div class="spinner"></div>`;
+  await bridge.send('update.apply');
+  const poll = setInterval(async () => {
+    const s = await (await fetch('http://127.0.0.1:9377/state')).json();
+    if (s.progress !== undefined){
+      document.getElementById('progressFill').style.width = s.progress + '%';
+      document.getElementById('progressText').textContent = s.step || '';
+    }
+    if (s.progress >= 100){
+      clearInterval(poll);
+      await bridge.send('system.reboot');
+    }
+  }, 500);
+};
+
+check();
+</script>
+</body>
+</html>
