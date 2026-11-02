@@ -1,0 +1,52 @@
+name: Build ISO
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install archiso
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm archiso
+
+      - name: Prepare profile (fixed)
+        run: |
+          # Копируем загрузочные директории из примера archiso
+          cp -r /usr/share/archiso/configs/releng/syslinux profile/
+          cp -r /usr/share/archiso/configs/releng/efiboot profile/
+          # Убираем file_permissions (они ломаются в контейнере)
+          cat > profile/profiledef.sh << 'EOF'
+          iso_name="nexus-os"
+          iso_label="NEXUS_$(date +%Y%m)"
+          iso_publisher="NEXUS OS"
+          iso_application="NEXUS OS Live"
+          iso_version="$(date +%Y.%m.%d)"
+          install_dir="arch"
+          buildmodes=('iso')
+          bootmodes=('bios.syslinux' 'uefi.systemd-boot')
+          arch="x86_64"
+          pacman_conf="pacman.conf"
+          airootfs_image_type="squashfs"
+          airootfs_image_tool_options=('-comp' 'xz' '-Xbcj' 'x86' '-b' '1M')
+          EOF
+          # Добавляем syslinux в пакеты
+          echo "syslinux" >> profile/packages.x86_64
+
+      - name: Build
+        run: |
+          mkdir -p work out
+          mkarchiso -v -w ./work -o ./out ./profile
+
+      - name: Upload ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-os-iso
+          path: out/*.iso
+          retention-days: 30
